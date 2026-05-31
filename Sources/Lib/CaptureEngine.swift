@@ -7,8 +7,16 @@ import ScreenCaptureKit
 ///
 /// Architecture:
 ///   - SCStream callbacks write PCM into lock-free ring buffers (real-time safe)
-///   - A dedicated writer thread drains both buffers, applies drift compensation,
-///     mixes, and writes to disk (non-real-time, may block on I/O)
+///   - A dedicated writer thread drains both buffers, mixes, and writes to disk
+///
+/// Synchronization contract (`@unchecked Sendable` justification):
+///   - `systemRing`, `micRing`: SPSC ring buffers. Producer = `captureQueue` (serial).
+///     Consumer = writer thread. No concurrent mutation.
+///   - `stream`, `writer`, `writerThread`, `isRunning`: mutated only in `start()`/`stop()`,
+///     which are called sequentially from the main async context.
+///   - `processSystemAudio`/`processMicrophoneAudio`: run exclusively on `captureQueue` (serial).
+///   - `drainAndWrite`/`writerLoop`: run exclusively on the writer thread.
+///   - No shared mutable state is accessed from more than one thread simultaneously.
 public final class CaptureEngine: NSObject, @unchecked Sendable {
     private let outputURL: URL
     private let sampleRate: UInt32 = 48000

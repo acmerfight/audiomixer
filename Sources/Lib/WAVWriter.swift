@@ -1,7 +1,13 @@
 import Foundation
 
 /// Writes PCM audio data to a standard WAV file (RIFF/WAVE format).
-/// Thread-safe for single-writer usage. Call `finalize()` to update headers before closing.
+///
+/// Synchronization contract (`@unchecked Sendable` justification):
+/// - All mutable state (`dataSize`) and all `FileHandle` operations occur
+///   exclusively on the writer thread (`com.audiorecorder.writer`).
+/// - `write(samples:)` is called only from `CaptureEngine.drainAndWrite()`.
+/// - `finalize()` is called only from `CaptureEngine.stop()` after the writer thread exits.
+/// - No concurrent access exists by construction.
 public final class WAVWriter: @unchecked Sendable {
     private let fileHandle: FileHandle
     private let sampleRate: UInt32
