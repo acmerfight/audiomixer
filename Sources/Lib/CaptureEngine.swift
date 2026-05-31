@@ -62,7 +62,7 @@ public final class CaptureEngine: NSObject, @unchecked Sendable {
         // Minimize video — we only want audio
         config.width = 2
         config.height = 2
-        config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(Int32.max))
+        config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
         config.showsCursor = false
 
         // System audio
