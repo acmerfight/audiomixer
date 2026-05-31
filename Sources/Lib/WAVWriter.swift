@@ -120,7 +120,7 @@ public final class WAVWriter: @unchecked Sendable {
         header.append(ascii: "data")
         header.appendUInt32(0)
 
-        // Total: 84 bytes
+        // Total: 80 bytes (RIFF12 + JUNK36 + fmt24 + data8)
         fileHandle.write(header)
     }
 
