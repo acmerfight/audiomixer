@@ -74,7 +74,7 @@ struct AudioRecorderCLI {
 
     private static func printUsage() {
         let usage = """
-        USAGE: AudioRecorder [OPTIONS]
+        USAGE: audiomixer [OPTIONS]
 
         Record system audio and microphone into a single WAV file.
 
@@ -84,10 +84,10 @@ struct AudioRecorderCLI {
           --help, -h              Show this help message
 
         EXAMPLES:
-          AudioRecorder                              Record until Ctrl+C
-          AudioRecorder --duration 60                Record for 60 seconds
-          AudioRecorder --output ~/meeting.wav       Save to specific path
-          AudioRecorder --duration 300 --output /tmp/rec.wav
+          audiomixer                                  Record until Ctrl+C
+          audiomixer --duration 60                    Record for 60 seconds
+          audiomixer --output ~/meeting.wav           Save to specific path
+          audiomixer --duration 300 --output /tmp/rec.wav
 
         OUTPUT FORMAT:
           WAV (PCM Int16, 48kHz, Stereo). Automatically upgrades to RF64 if >4GB.

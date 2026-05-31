@@ -133,8 +133,11 @@ public final class CaptureEngine: NSObject, @unchecked Sendable {
             if result.system.isEmpty && result.mic.isEmpty { break }
 
             let mixed = AudioMixer.mix(system: result.system, mic: result.mic)
-            writer?.write(samples: AudioMixer.toInt16(mixed))
-
+            let ok = writer?.write(samples: AudioMixer.toInt16(mixed)) ?? false
+            if !ok {
+                isRunningLock.withLock { $0 = false }
+                break
+            }
         }
     }
 }

@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "AudioRecorder",
+    name: "audiomixer",
     platforms: [.macOS(.v15)],
     products: [
         .library(name: "AudioRecorderLib", targets: ["AudioRecorderLib"]),
@@ -19,7 +19,7 @@ let package = Package(
             ]
         ),
         .executableTarget(
-            name: "AudioRecorder",
+            name: "audiomixer",
             dependencies: ["AudioRecorderLib"],
             path: "Sources/App",
             swiftSettings: [.unsafeFlags(["-parse-as-library"])]

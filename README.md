@@ -16,13 +16,16 @@ Record system audio and microphone into a single WAV file on macOS. No virtual a
 swift build -c release
 
 # Record until Ctrl+C
-.build/release/AudioRecorder
+.build/release/audiomixer
 
 # Record for 60 seconds
-.build/release/AudioRecorder --duration 60
+.build/release/audiomixer --duration 60
+
+# Record to a specific file
+.build/release/audiomixer --output ~/Desktop/meeting.wav --duration 300
 ```
 
-Output: `recording_YYYYMMDD_HHMMSS.wav` in the current directory.
+Output: `recording_YYYYMMDD_HHMMSS.wav` in the current directory (or path specified by `--output`).
 
 ## Requirements
 
@@ -95,7 +98,7 @@ swift build
 # Integration (22 specs): concurrency, overflow, pipeline, resampling, RF64
 .build/debug/AudioRecorderIntegration
 
-# E2E (19 specs): process lifecycle, recording, SIGINT stress, file validation
+# E2E (33 specs): process lifecycle, recording, SIGINT stress, file validation, CLI flags
 .build/debug/AudioRecorderE2E
 ```
 

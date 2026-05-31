@@ -24,9 +24,9 @@ func findBinary() -> String? {
     let selfDir = ProcessInfo.processInfo.arguments[0]
         .components(separatedBy: "/").dropLast().joined(separator: "/")
     let candidates = [
-        selfDir + "/AudioRecorder",
-        ".build/release/AudioRecorder",
-        ".build/debug/AudioRecorder",
+        selfDir + "/audiomixer",
+        ".build/release/audiomixer",
+        ".build/debug/audiomixer",
     ]
     return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
 }
