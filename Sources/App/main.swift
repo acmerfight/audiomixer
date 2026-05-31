@@ -2,16 +2,9 @@ import Foundation
 import ScreenCaptureKit
 import AudioRecorderLib
 
-nonisolated(unsafe) var globalStopped = false
-
-private func signalHandler(_: Int32) {
-    globalStopped = true
-}
-
 @main
 struct AudioRecorderCLI {
     static func main() async {
-        // Preflight: check Screen Recording permission with timeout
         fputs("Checking permissions...\n", stderr)
 
         let permitted = await checkScreenRecordingPermission()
@@ -37,9 +30,6 @@ struct AudioRecorderCLI {
         let outputURL = makeOutputURL()
         let engine = CaptureEngine(outputURL: outputURL)
 
-        signal(SIGINT, signalHandler)
-        signal(SIGTERM, signalHandler)
-
         do {
             try await engine.start()
             fputs("Recording to: \(outputURL.path)\n", stderr)
@@ -49,13 +39,9 @@ struct AudioRecorderCLI {
                 fputs("Press Ctrl+C to stop\n", stderr)
             }
 
-            let startTime = Date()
-            while !globalStopped {
-                try? await Task.sleep(for: .milliseconds(100))
-                if let d = duration, Date().timeIntervalSince(startTime) >= Double(d) {
-                    break
-                }
-            }
+            // Wait for stop signal on a non-async thread to avoid
+            // SIGILL crash when signal interrupts Task.sleep
+            await waitForStopSignal(duration: duration)
 
             fputs("\nStopping...\n", stderr)
             await engine.stop()
@@ -63,6 +49,43 @@ struct AudioRecorderCLI {
         } catch {
             fputs("Error: \(error.localizedDescription)\n", stderr)
             exit(1)
+        }
+    }
+
+    private static func waitForStopSignal(duration: Int?) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let queue = DispatchQueue(label: "com.audiorecorder.signal")
+
+            // SIGINT handler
+            signal(SIGINT, SIG_IGN)
+            let sigSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: queue)
+            sigSource.setEventHandler {
+                sigSource.cancel()
+                continuation.resume()
+            }
+            sigSource.resume()
+
+            // SIGTERM handler
+            signal(SIGTERM, SIG_IGN)
+            let termSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: queue)
+            termSource.setEventHandler {
+                termSource.cancel()
+                continuation.resume()
+            }
+            termSource.resume()
+
+            // Duration timer (optional)
+            if let duration {
+                let timer = DispatchSource.makeTimerSource(queue: queue)
+                timer.schedule(deadline: .now() + .seconds(duration))
+                timer.setEventHandler {
+                    timer.cancel()
+                    sigSource.cancel()
+                    termSource.cancel()
+                    continuation.resume()
+                }
+                timer.resume()
+            }
         }
     }
 
