@@ -76,7 +76,7 @@ swift build
 # Integration tests — concurrency, overflow, pipeline, resampling (15 specs)
 .build/debug/AudioRecorderIntegration
 
-# E2E tests — process lifecycle, recording, SIGINT, file validation (18 specs)
+# E2E tests — process lifecycle, recording, SIGINT stress, file validation (19 specs)
 .build/debug/AudioRecorderE2E
 ```
 
