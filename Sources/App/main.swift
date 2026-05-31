@@ -1,13 +1,43 @@
 import Foundation
+import ScreenCaptureKit
 import AudioRecorderLib
 
-struct App {
-    static func run() async {
+@main
+struct AudioRecorderCLI {
+    static func main() async {
+        // Preflight: check Screen Recording permission with timeout
+        fputs("Checking permissions...\n", stderr)
+
+        let permitted = await checkScreenRecordingPermission()
+
+        if !permitted {
+            fputs("""
+            ERROR: Screen Recording permission not granted.
+
+            Fix:
+              1. Open System Settings → Privacy & Security → Screen & System Audio Recording
+              2. Enable your terminal app (Terminal.app / iTerm2 / etc.)
+              3. Restart your terminal completely
+              4. Run this command again
+
+            Note: macOS hangs indefinitely without this permission — no prompt is shown for CLI tools.
+
+            """, stderr)
+            exit(1)
+        }
+        fputs("Permissions OK.\n", stderr)
+
         let duration = parseDuration()
         let outputURL = makeOutputURL()
         let engine = CaptureEngine(outputURL: outputURL)
 
-        let stopSignal = installSignalHandler()
+        // Install Ctrl+C handler
+        signal(SIGINT, SIG_IGN)
+        let sigSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
+        let stopped = UnsafeMutablePointer<Bool>.allocate(capacity: 1)
+        stopped.pointee = false
+        sigSource.setEventHandler { stopped.pointee = true }
+        sigSource.resume()
 
         do {
             try await engine.start()
@@ -18,23 +48,39 @@ struct App {
                 fputs("Press Ctrl+C to stop\n", stderr)
             }
 
-            if let duration {
-                await race(
-                    { await stopSignal() },
-                    { try? await Task.sleep(for: .seconds(duration)) }
-                )
-            } else {
-                await stopSignal()
+            let startTime = Date()
+            while !stopped.pointee {
+                try await Task.sleep(for: .milliseconds(100))
+                if let d = duration, Date().timeIntervalSince(startTime) >= Double(d) {
+                    break
+                }
             }
 
             fputs("\nStopping...\n", stderr)
             await engine.stop()
+            sigSource.cancel()
+            stopped.deallocate()
             fputs("Saved: \(outputURL.path)\n", stderr)
         } catch {
             fputs("Error: \(error.localizedDescription)\n", stderr)
             exit(1)
         }
-        exit(0)
+    }
+
+    private static func checkScreenRecordingPermission() async -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                _ = try? await SCShareableContent.current
+                return true
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(3))
+                return false
+            }
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
+        }
     }
 
     private static func parseDuration() -> Int? {
@@ -52,31 +98,4 @@ struct App {
         return URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent(name)
     }
-
-    private static func installSignalHandler() -> @Sendable () async -> Void {
-        return {
-            await withCheckedContinuation { continuation in
-                signal(SIGINT, SIG_IGN)
-                let src = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
-                src.setEventHandler {
-                    src.cancel()
-                    continuation.resume()
-                }
-                src.resume()
-            }
-        }
-    }
-
-    private static func race(_ a: @escaping @Sendable () async -> Void, _ b: @escaping @Sendable () async -> Void) async {
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { await a() }
-            group.addTask { await b() }
-            await group.next()
-            group.cancelAll()
-        }
-    }
 }
-
-let sem = DispatchSemaphore(value: 0)
-Task { await App.run(); sem.signal() }
-sem.wait()

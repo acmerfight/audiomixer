@@ -21,7 +21,8 @@ let package = Package(
         .executableTarget(
             name: "AudioRecorder",
             dependencies: ["AudioRecorderLib"],
-            path: "Sources/App"
+            path: "Sources/App",
+            swiftSettings: [.unsafeFlags(["-parse-as-library"])]
         ),
         .executableTarget(
             name: "AudioRecorderTests",

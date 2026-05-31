@@ -63,13 +63,17 @@ public final class CaptureEngine: NSObject, @unchecked Sendable {
         config.captureMicrophone = true
         if let mic = AVCaptureDevice.default(for: .audio) {
             config.microphoneCaptureDeviceID = mic.uniqueID
+        } else {
+            config.captureMicrophone = false
         }
 
         stream = SCStream(filter: filter, configuration: config, delegate: self)
         guard let stream else { throw CaptureError.streamCreationFailed }
 
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: captureQueue)
-        try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: captureQueue)
+        if config.captureMicrophone {
+            try stream.addStreamOutput(self, type: .microphone, sampleHandlerQueue: captureQueue)
+        }
 
         // Start writer thread before capture to avoid losing initial samples
         isRunning = true
