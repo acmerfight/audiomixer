@@ -5,6 +5,11 @@ import AudioRecorderLib
 @main
 struct AudioRecorderCLI {
     static func main() async {
+        // Ignore signals immediately at startup to prevent early termination
+        // during permission checks. Proper handling is installed later.
+        signal(SIGINT, SIG_IGN)
+        signal(SIGTERM, SIG_IGN)
+
         fputs("Checking permissions...\n", stderr)
 
         let permitted = await checkScreenRecordingPermission()
@@ -56,8 +61,6 @@ struct AudioRecorderCLI {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let queue = DispatchQueue(label: "com.audiorecorder.signal")
 
-            // SIGINT handler
-            signal(SIGINT, SIG_IGN)
             let sigSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: queue)
             sigSource.setEventHandler {
                 sigSource.cancel()
@@ -65,8 +68,6 @@ struct AudioRecorderCLI {
             }
             sigSource.resume()
 
-            // SIGTERM handler
-            signal(SIGTERM, SIG_IGN)
             let termSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: queue)
             termSource.setEventHandler {
                 termSource.cancel()

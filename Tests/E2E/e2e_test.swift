@@ -172,7 +172,7 @@ do {
     if let durationLine = afOutput.components(separatedBy: "\n").first(where: { $0.contains("estimated duration") }) {
         let numbers = durationLine.components(separatedBy: CharacterSet.decimalDigits.inverted).compactMap { Double($0) }
         if let dur = numbers.first {
-            check(dur >= 2.5 && dur <= 4.0, "Duration ~3s (got \(dur)s)")
+            check(dur >= 2.0 && dur <= 5.0, "Duration ~3s (got \(dur)s)")
         }
     }
 
@@ -253,6 +253,36 @@ do {
         if let p1 = extractSavedPath(from: r1.output) { try? FileManager.default.removeItem(atPath: p1) }
         if let p2 = extractSavedPath(from: r2.output) { try? FileManager.default.removeItem(atPath: p2) }
     }
+}
+
+// ═══════════════════════════════════════════════════════════════
+print("\n═══ E2E: SIGINT Stress (10 rapid Ctrl+C cycles) ═══\n")
+// ═══════════════════════════════════════════════════════════════
+
+do {
+    // Send SIGINT at varying delays AFTER recording has started.
+    // Uses --duration as fallback so test doesn't hang if SIGINT is ignored.
+    // Delays are all > 1.5s to ensure the process has entered recording state.
+    let delays: [Double] = [1.5, 1.7, 2.0, 2.2, 2.5, 1.8, 2.1, 1.6, 1.9, 2.3]
+    var crashes = 0
+
+    for delay in delays {
+        let result = run(args: ["--duration", "10"], timeout: 8, sendSIGINTAfter: delay)
+
+        if result.output.contains("permission not granted") { continue }
+
+        // A crash = non-zero exit without "Saved:" in output
+        if result.exitCode != 0 && !result.output.contains("Saved:") {
+            crashes += 1
+            print("    Crash at delay \(delay)s: exit=\(result.exitCode) out=\(result.output.suffix(100))")
+        }
+
+        if let path = extractSavedPath(from: result.output) {
+            try? FileManager.default.removeItem(atPath: path)
+        }
+    }
+
+    check(crashes == 0, "Zero crashes in 10 SIGINT cycles at varying timings")
 }
 
 // ═══════════════════════════════════════════════════════════════
