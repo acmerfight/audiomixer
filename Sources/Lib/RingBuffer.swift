@@ -3,16 +3,21 @@ import os
 
 /// Ring buffer for Float32 audio samples with overflow-drops-oldest policy.
 ///
-/// Thread safety: uses `os_unfair_lock` to serialize all access.
-/// Correct on both x86_64 and ARM64. Lock hold time is bounded
-/// (index math + memcpy of at most ~4KB per call at 48kHz).
+/// Thread safety: uses `OSAllocatedUnfairLock` to serialize all access.
+/// The lock is uncontended in the common case (producer and consumer alternate),
+/// making it effectively zero-cost. Correct on both x86_64 and ARM64.
+///
+/// Synchronization contract (`@unchecked Sendable` justification):
+/// - All mutable state (head, tail, storage contents) is accessed only
+///   while holding `lock`. Producer (captureQueue) and consumer (writer thread)
+///   never hold the lock simultaneously in practice (alternating access pattern).
 public final class RingBuffer: @unchecked Sendable {
     private let storage: UnsafeMutablePointer<Float>
     private let mask: Int
     private let cap: Int
     private var head: Int = 0
     private var tail: Int = 0
-    private var _lock = os_unfair_lock()
+    private let lock = OSAllocatedUnfairLock()
 
     public init(capacity: Int) {
         let powerOf2 = Self.nextPowerOf2(capacity)
@@ -30,16 +35,16 @@ public final class RingBuffer: @unchecked Sendable {
     public var capacity: Int { cap }
 
     public var availableToRead: Int {
-        os_unfair_lock_lock(&_lock)
+        lock.lock()
         let v = availableUnlocked
-        os_unfair_lock_unlock(&_lock)
+        lock.unlock()
         return v
     }
 
     public var availableToWrite: Int {
-        os_unfair_lock_lock(&_lock)
+        lock.lock()
         let v = cap - 1 - availableUnlocked
-        os_unfair_lock_unlock(&_lock)
+        lock.unlock()
         return v
     }
 
@@ -47,11 +52,12 @@ public final class RingBuffer: @unchecked Sendable {
         (head &- tail) & mask
     }
 
+    /// Write samples. If space is insufficient, drops oldest data to make room.
     public func write(_ samples: [Float]) {
         guard !samples.isEmpty else { return }
 
         samples.withUnsafeBufferPointer { src in
-            os_unfair_lock_lock(&_lock)
+            lock.lock()
 
             let count = src.count
             let maxUsable = cap - 1
@@ -86,17 +92,18 @@ public final class RingBuffer: @unchecked Sendable {
             }
 
             head = (head &+ writeCount) & mask
-            os_unfair_lock_unlock(&_lock)
+            lock.unlock()
         }
     }
 
+    /// Read up to `count` samples. Returns fewer if not enough available.
     public func read(count requested: Int) -> [Float] {
-        os_unfair_lock_lock(&_lock)
+        lock.lock()
 
         let avail = availableUnlocked
         let count = min(requested, avail)
         guard count > 0 else {
-            os_unfair_lock_unlock(&_lock)
+            lock.unlock()
             return []
         }
 
@@ -117,7 +124,7 @@ public final class RingBuffer: @unchecked Sendable {
         }
 
         tail = (tail &+ count) & mask
-        os_unfair_lock_unlock(&_lock)
+        lock.unlock()
         return output
     }
 

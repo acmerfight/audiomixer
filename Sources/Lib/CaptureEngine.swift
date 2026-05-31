@@ -135,7 +135,6 @@ public final class CaptureEngine: NSObject, @unchecked Sendable {
             let mixed = AudioMixer.mix(system: result.system, mic: result.mic)
             writer?.write(samples: AudioMixer.toInt16(mixed))
 
-            if flush { break }
         }
     }
 }
