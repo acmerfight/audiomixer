@@ -41,11 +41,13 @@ Output: `recording_YYYYMMDD_HHMMSS.wav` (PCM Int16, 48kHz, Stereo)
 
 ## Permissions Setup
 
-On first run, macOS will prompt for permissions. If it hangs, manually grant:
+macOS does **not** prompt CLI tools for permissions. You must grant manually:
 
-1. **System Settings → Privacy & Security → Screen Recording** → enable your terminal app
+1. **System Settings → Privacy & Security → Screen & System Audio Recording** → enable your terminal app
 2. **System Settings → Privacy & Security → Microphone** → enable your terminal app
-3. Restart your terminal after granting permissions
+3. **Restart your terminal** (quit and reopen — required for permissions to take effect)
+
+If permissions are missing, the tool exits with a clear error message within 3 seconds instead of hanging.
 
 ## Architecture
 
@@ -71,14 +73,11 @@ Key design decisions:
 ```bash
 swift build
 
-# Unit tests (28 specs)
-.build/debug/AudioRecorderTests
-
-# Integration tests (12 specs)
+# Integration tests — concurrency, overflow, pipeline, resampling (15 specs)
 .build/debug/AudioRecorderIntegration
 
-# Stress tests — concurrency + overflow (9 specs)
-.build/debug/AudioRecorderStress
+# E2E tests — process lifecycle, recording, SIGINT, file validation (18 specs)
+.build/debug/AudioRecorderE2E
 ```
 
 ## How It Works
