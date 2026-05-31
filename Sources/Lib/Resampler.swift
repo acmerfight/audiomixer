@@ -1,6 +1,6 @@
 import Foundation
 
-/// Audio resampling utilities using linear interpolation.
+/// Audio resampling using linear interpolation.
 /// Operates on interleaved Float32 PCM buffers.
 public enum Resampler {
 
@@ -16,40 +16,6 @@ public enum Resampler {
 
         let inputFrames = input.count / channels
         let outputFrames = Int((Double(inputFrames) * Double(targetRate) / Double(sourceRate)).rounded())
-        guard outputFrames > 0 else { return [] }
-
-        let ratio = Double(inputFrames - 1) / Double(max(outputFrames - 1, 1))
-        let output = [Float](unsafeUninitializedCapacity: outputFrames * channels) { buffer, count in
-            for frame in 0..<outputFrames {
-                let srcPos = Double(frame) * ratio
-                let idx = Int(srcPos)
-                let frac = Float(srcPos - Double(idx))
-                let nextIdx = min(idx + 1, inputFrames - 1)
-
-                for ch in 0..<channels {
-                    let a = input[idx * channels + ch]
-                    let b = input[nextIdx * channels + ch]
-                    buffer[frame * channels + ch] = a + frac * (b - a)
-                }
-            }
-            count = outputFrames * channels
-        }
-        return output
-    }
-
-    /// Adjusts buffer length to compensate for clock drift.
-    /// Positive driftSamples = too many received → shrink output.
-    /// Negative driftSamples = too few received → stretch output.
-    /// The adjustment is applied per-frame (not per-sample) for interleaved data.
-    public static func compensateDrift(
-        _ input: [Float],
-        driftSamples: Int,
-        channels: Int
-    ) -> [Float] {
-        guard driftSamples != 0, !input.isEmpty, channels > 0 else { return input }
-
-        let inputFrames = input.count / channels
-        let outputFrames = inputFrames - driftSamples
         guard outputFrames > 0 else { return [] }
 
         let ratio = Double(inputFrames - 1) / Double(max(outputFrames - 1, 1))

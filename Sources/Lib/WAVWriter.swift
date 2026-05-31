@@ -13,7 +13,8 @@ public final class WAVWriter: @unchecked Sendable {
     private let sampleRate: UInt32
     private let channels: UInt16
     private let bitsPerSample: UInt16
-    private var dataSize: UInt32 = 0
+    private var dataSize: UInt64 = 0
+    private static let maxWAVDataSize: UInt64 = UInt64(UInt32.max) - 36
 
     public init(url: URL, sampleRate: UInt32, channels: UInt16, bitsPerSample: UInt16) throws {
         self.sampleRate = sampleRate
@@ -26,19 +27,24 @@ public final class WAVWriter: @unchecked Sendable {
     }
 
     public func write(samples: [Int16]) {
+        guard dataSize < Self.maxWAVDataSize else { return } // Cap at 4GB WAV limit
         samples.withUnsafeBufferPointer { ptr in
             let data = Data(bytes: ptr.baseAddress!, count: ptr.count * MemoryLayout<Int16>.size)
             fileHandle.write(data)
-            dataSize += UInt32(data.count)
+            dataSize += UInt64(data.count)
         }
     }
 
     public func finalize() {
+        // WAV format uses UInt32 for sizes — cap at maximum representable value
+        let clampedDataSize = UInt32(min(dataSize, UInt64(UInt32.max)))
+        let clampedRiffSize = UInt32(min(36 + dataSize, UInt64(UInt32.max)))
+
         fileHandle.seek(toFileOffset: 40)
-        writeUInt32(dataSize)
+        writeUInt32(clampedDataSize)
 
         fileHandle.seek(toFileOffset: 4)
-        writeUInt32(36 + dataSize)
+        writeUInt32(clampedRiffSize)
 
         fileHandle.closeFile()
     }

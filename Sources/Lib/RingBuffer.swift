@@ -1,22 +1,19 @@
 import Foundation
+import os
 
-/// Lock-free single-producer single-consumer ring buffer for Float32 audio samples.
+/// Ring buffer for Float32 audio samples with overflow-drops-oldest policy.
 ///
-/// Overflow policy: when full, **drops oldest data** to make room for new writes.
-/// This ensures the most recent audio is always preserved — critical for recording
-/// where losing the latest content is worse than losing old buffered content.
-///
-/// Thread safety: designed for exactly one writer thread and one reader thread.
-/// On x86_64 (TSO), plain loads/stores are sufficient for SPSC correctness.
-/// On ARM (weak memory model), this would require atomic acquire/release barriers.
+/// Thread safety: uses `os_unfair_lock` to serialize all access.
+/// Correct on both x86_64 and ARM64. Lock hold time is bounded
+/// (index math + memcpy of at most ~4KB per call at 48kHz).
 public final class RingBuffer: @unchecked Sendable {
     private let storage: UnsafeMutablePointer<Float>
     private let mask: Int
+    private let cap: Int
     private var head: Int = 0
     private var tail: Int = 0
-    private let cap: Int
+    private var _lock = os_unfair_lock()
 
-    /// Creates a ring buffer. Capacity is rounded up to next power of 2.
     public init(capacity: Int) {
         let powerOf2 = Self.nextPowerOf2(capacity)
         self.cap = powerOf2
@@ -26,91 +23,101 @@ public final class RingBuffer: @unchecked Sendable {
     }
 
     deinit {
+        storage.deinitialize(count: cap)
         storage.deallocate()
     }
 
     public var capacity: Int { cap }
 
     public var availableToRead: Int {
-        (head - tail + cap) & mask
+        os_unfair_lock_lock(&_lock)
+        let v = availableUnlocked
+        os_unfair_lock_unlock(&_lock)
+        return v
     }
 
     public var availableToWrite: Int {
-        cap - 1 - availableToRead
+        os_unfair_lock_lock(&_lock)
+        let v = cap - 1 - availableUnlocked
+        os_unfair_lock_unlock(&_lock)
+        return v
     }
 
-    /// Write samples into the buffer.
-    /// If there isn't enough space, **advances tail (drops oldest)** to make room.
+    private var availableUnlocked: Int {
+        (head &- tail) & mask
+    }
+
     public func write(_ samples: [Float]) {
         guard !samples.isEmpty else { return }
 
-        let count = samples.count
-        let maxUsable = cap - 1
+        samples.withUnsafeBufferPointer { src in
+            os_unfair_lock_lock(&_lock)
 
-        if count >= maxUsable {
-            // Writing more than buffer can hold: keep only the last maxUsable samples
-            samples.withUnsafeBufferPointer { src in
-                let offset = count - maxUsable
-                let writeStart = head & mask
-                let firstChunk = min(maxUsable, cap - writeStart)
-                storage.advanced(by: writeStart)
-                    .update(from: src.baseAddress!.advanced(by: offset), count: firstChunk)
-                if firstChunk < maxUsable {
-                    storage.update(from: src.baseAddress!.advanced(by: offset + firstChunk), count: maxUsable - firstChunk)
+            let count = src.count
+            let maxUsable = cap - 1
+            let writeCount: Int
+            let srcStart: Int
+
+            if count >= maxUsable {
+                writeCount = maxUsable
+                srcStart = count - maxUsable
+                tail = 0
+                head = 0
+            } else {
+                writeCount = count
+                srcStart = 0
+                let spaceNeeded = count - (cap - 1 - availableUnlocked)
+                if spaceNeeded > 0 {
+                    tail = (tail &+ spaceNeeded) & mask
                 }
             }
-            head = (head + maxUsable) & mask
-            tail = (head + 1) & mask
-            return
-        }
 
-        // Check if we need to drop oldest to make room
-        let spaceNeeded = count - availableToWrite
-        if spaceNeeded > 0 {
-            tail = (tail + spaceNeeded) & mask
-        }
-
-        // Write the data
-        samples.withUnsafeBufferPointer { src in
-            var remaining = count
-            var srcOffset = 0
-            var writePos = head & mask
+            var remaining = writeCount
+            var srcOffset = srcStart
+            var dstPos = head & mask
 
             while remaining > 0 {
-                let chunk = min(remaining, cap - writePos)
-                storage.advanced(by: writePos)
+                let chunk = min(remaining, cap - dstPos)
+                storage.advanced(by: dstPos)
                     .update(from: src.baseAddress!.advanced(by: srcOffset), count: chunk)
-                writePos = (writePos + chunk) & mask
+                dstPos = (dstPos + chunk) & mask
                 srcOffset += chunk
                 remaining -= chunk
             }
 
-            head = (head + count) & mask
+            head = (head &+ writeCount) & mask
+            os_unfair_lock_unlock(&_lock)
         }
     }
 
-    /// Read up to `count` samples. Returns fewer if not enough available.
     public func read(count requested: Int) -> [Float] {
-        let count = min(requested, availableToRead)
-        guard count > 0 else { return [] }
+        os_unfair_lock_lock(&_lock)
+
+        let avail = availableUnlocked
+        let count = min(requested, avail)
+        guard count > 0 else {
+            os_unfair_lock_unlock(&_lock)
+            return []
+        }
 
         let output = [Float](unsafeUninitializedCapacity: count) { dst, initializedCount in
             var remaining = count
             var dstOffset = 0
-            var readPos = tail & mask
+            var srcPos = tail & mask
 
             while remaining > 0 {
-                let chunk = min(remaining, cap - readPos)
+                let chunk = min(remaining, cap - srcPos)
                 dst.baseAddress!.advanced(by: dstOffset)
-                    .update(from: storage.advanced(by: readPos), count: chunk)
-                readPos = (readPos + chunk) & mask
+                    .update(from: storage.advanced(by: srcPos), count: chunk)
+                srcPos = (srcPos + chunk) & mask
                 dstOffset += chunk
                 remaining -= chunk
             }
             initializedCount = count
         }
 
-        tail = (tail + count) & mask
+        tail = (tail &+ count) & mask
+        os_unfair_lock_unlock(&_lock)
         return output
     }
 

@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreMedia
+import os
 import ScreenCaptureKit
 
 /// Captures system audio and microphone via ScreenCaptureKit, mixes them,
@@ -10,13 +11,15 @@ import ScreenCaptureKit
 ///   - A dedicated writer thread drains both buffers, mixes, and writes to disk
 ///
 /// Synchronization contract (`@unchecked Sendable` justification):
-///   - `systemRing`, `micRing`: SPSC ring buffers. Producer = `captureQueue` (serial).
-///     Consumer = writer thread. No concurrent mutation.
-///   - `stream`, `writer`, `writerThread`, `isRunning`: mutated only in `start()`/`stop()`,
-///     which are called sequentially from the main async context.
+///   - `systemRing`, `micRing`: thread-safe (internal os_unfair_lock). Producer = `captureQueue`.
+///     Consumer = writer thread, then `stop()` after thread exits.
+///   - `isRunningLock`: OSAllocatedUnfairLock<Bool>, safe across threads.
+///   - `stream`, `writer`, `writerThread`: mutated only in `start()`/`stop()`,
+///     called sequentially from the main async context. `stop()` waits for writer
+///     thread to finish before accessing ring buffers (no SPSC violation).
 ///   - `processSystemAudio`/`processMicrophoneAudio`: run exclusively on `captureQueue` (serial).
-///   - `drainAndWrite`/`writerLoop`: run exclusively on the writer thread.
-///   - No shared mutable state is accessed from more than one thread simultaneously.
+///   - `drainAndWrite`: called from writer thread during recording, then from `stop()`
+///     only after writer thread has exited (`writerThread.isFinished == true`).
 public final class CaptureEngine: NSObject, @unchecked Sendable {
     private let outputURL: URL
     private let sampleRate: UInt32 = 48000
@@ -32,9 +35,10 @@ public final class CaptureEngine: NSObject, @unchecked Sendable {
     // Aligned draining replaces broken drift-based compensation
     private let drainer = AlignedDrainer(sampleRate: 48000, channels: 2)
 
-    // Writer thread
+    // Writer thread — `isRunning` is accessed from main (stop) and writer thread,
+    // protected by os_unfair_lock for ARM64 correctness.
     private var writerThread: Thread?
-    private var isRunning = false
+    private let isRunningLock = OSAllocatedUnfairLock(initialState: false)
 
     // Dispatch queue for SCStreamOutput (serial, non-main)
     private let captureQueue = DispatchQueue(label: "com.audiorecorder.capture", qos: .userInteractive)
@@ -84,11 +88,12 @@ public final class CaptureEngine: NSObject, @unchecked Sendable {
         }
 
         // Start writer thread before capture to avoid losing initial samples
-        isRunning = true
-        writerThread = Thread { [weak self] in self?.writerLoop() }
-        writerThread?.qualityOfService = .userInitiated
-        writerThread?.name = "com.audiorecorder.writer"
-        writerThread?.start()
+        isRunningLock.withLock { $0 = true }
+        let thread = Thread { [weak self] in self?.writerLoop() }
+        thread.qualityOfService = .userInitiated
+        thread.name = "com.audiorecorder.writer"
+        writerThread = thread
+        thread.start()
 
         try await stream.startCapture()
     }
@@ -99,11 +104,14 @@ public final class CaptureEngine: NSObject, @unchecked Sendable {
             self.stream = nil
         }
 
-        // Signal writer thread to finish
-        isRunning = false
+        // Signal writer thread to finish and wait for it to exit
+        isRunningLock.withLock { $0 = false }
+        while writerThread?.isFinished == false {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
         writerThread = nil
 
-        // Final drain
+        // Final drain — safe because writer thread has exited (no SPSC violation)
         drainAndWrite(flush: true)
         writer?.finalize()
         writer = nil
@@ -112,9 +120,9 @@ public final class CaptureEngine: NSObject, @unchecked Sendable {
     // MARK: - Writer Thread
 
     private func writerLoop() {
-        while isRunning {
+        while isRunningLock.withLock({ $0 }) {
             drainAndWrite(flush: false)
-            Thread.sleep(forTimeInterval: 0.05) // 50ms polling — balances latency vs CPU
+            Thread.sleep(forTimeInterval: 0.05)
         }
     }
 
@@ -188,16 +196,29 @@ extension CaptureEngine: SCStreamOutput {
         guard let formatDesc = sampleBuffer.formatDescription,
               let asbd = formatDesc.audioStreamBasicDescription else { return nil }
 
-        var blockBuffer: CMBlockBuffer?
-        let listSize = MemoryLayout<AudioBufferList>.size
-        let abl = UnsafeMutablePointer<AudioBufferList>.allocate(capacity: 1)
+        // Query the required buffer list size first (handles non-interleaved multi-channel)
+        var bufferListSize: Int = 0
+        CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            sampleBuffer,
+            bufferListSizeNeededOut: &bufferListSize,
+            bufferListOut: nil,
+            bufferListSize: 0,
+            blockBufferAllocator: nil,
+            blockBufferMemoryAllocator: nil,
+            flags: 0,
+            blockBufferOut: nil
+        )
+        guard bufferListSize > 0 else { return nil }
+
+        let abl = UnsafeMutablePointer<AudioBufferList>.allocate(capacity: bufferListSize / MemoryLayout<AudioBufferList>.stride + 1)
         defer { abl.deallocate() }
 
+        var blockBuffer: CMBlockBuffer?
         let status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
             sampleBuffer,
             bufferListSizeNeededOut: nil,
             bufferListOut: abl,
-            bufferListSize: listSize,
+            bufferListSize: bufferListSize,
             blockBufferAllocator: nil,
             blockBufferMemoryAllocator: nil,
             flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,

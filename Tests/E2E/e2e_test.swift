@@ -123,70 +123,53 @@ print("\n═══ E2E: Timed Recording Produces Valid WAV ═══\n")
 do {
     let result = run(args: ["--duration", "3"], timeout: 10)
 
-    guard result.output.contains("Saved:"), let path = extractSavedPath(from: result.output) else {
-        // No permission — skip file validation tests
-        if result.output.contains("permission not granted") {
-            check(true, "Skipped (no permission in this environment)")
-        } else {
-            check(false, "Expected 'Saved:' in output, got: \(result.output.prefix(200))")
-        }
-        // Jump to next section
-        if false {} // placeholder for control flow
-        check(true, "---")
-        check(true, "---")
-        check(true, "---")
-        check(true, "---")
-        print("") // spacer before next section
-        fatalError("unreachable") // won't reach due to above
-    }
-    defer { try? FileManager.default.removeItem(atPath: path) }
+    if result.output.contains("permission not granted") {
+        check(true, "Skipped (no permission in this environment)")
+    } else if let path = extractSavedPath(from: result.output) {
+        defer { try? FileManager.default.removeItem(atPath: path) }
 
-    // File exists
-    let exists = FileManager.default.fileExists(atPath: path)
-    check(exists, "Output file exists")
+        let exists = FileManager.default.fileExists(atPath: path)
+        check(exists, "Output file exists")
 
-    // File is non-trivial size (3s stereo 48kHz Int16 ≈ 576KB)
-    let attrs = try? FileManager.default.attributesOfItem(atPath: path)
-    let size = (attrs?[.size] as? Int) ?? 0
-    check(size > 100_000, "File is substantial (\(size) bytes, expect ~576KB for 3s)")
-    check(size < 2_000_000, "File is not unreasonably large (\(size) bytes)")
+        let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+        let size = (attrs?[.size] as? Int) ?? 0
+        check(size > 100_000, "File is substantial (\(size) bytes, expect ~576KB for 3s)")
+        check(size < 2_000_000, "File is not unreasonably large (\(size) bytes)")
 
-    // afinfo can parse it
-    let afinfo = Process()
-    afinfo.executableURL = URL(fileURLWithPath: "/usr/bin/afinfo")
-    afinfo.arguments = [path]
-    let afPipe = Pipe()
-    afinfo.standardOutput = afPipe
-    afinfo.standardError = afPipe
-    try? afinfo.run()
-    afinfo.waitUntilExit()
-    let afOutput = String(data: afPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-    check(afinfo.terminationStatus == 0, "afinfo validates WAV file")
+        let afinfo = Process()
+        afinfo.executableURL = URL(fileURLWithPath: "/usr/bin/afinfo")
+        afinfo.arguments = [path]
+        let afPipe = Pipe()
+        afinfo.standardOutput = afPipe
+        afinfo.standardError = afPipe
+        try? afinfo.run()
+        afinfo.waitUntilExit()
+        let afOutput = String(data: afPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        check(afinfo.terminationStatus == 0, "afinfo validates WAV file")
+        check(afOutput.contains("48000 Hz"), "Sample rate is 48000 Hz")
+        check(afOutput.contains("2 ch"), "Stereo (2 channels)")
+        check(afOutput.contains("Int16"), "16-bit integer PCM")
 
-    // Correct format
-    check(afOutput.contains("48000 Hz"), "Sample rate is 48000 Hz")
-    check(afOutput.contains("2 ch"), "Stereo (2 channels)")
-    check(afOutput.contains("Int16"), "16-bit integer PCM")
-
-    // Duration approximately correct
-    if let durationLine = afOutput.components(separatedBy: "\n").first(where: { $0.contains("estimated duration") }) {
-        let numbers = durationLine.components(separatedBy: CharacterSet.decimalDigits.inverted).compactMap { Double($0) }
-        if let dur = numbers.first {
-            check(dur >= 2.0 && dur <= 5.0, "Duration ~3s (got \(dur)s)")
-        }
-    }
-
-    // Audio is not silence
-    let fileData = try? Data(contentsOf: URL(fileURLWithPath: path))
-    if let audioData = fileData?[44...] {
-        var maxAbs: Int16 = 0
-        audioData.withUnsafeBytes { buf in
-            for sample in buf.bindMemory(to: Int16.self) {
-                let a = sample < 0 ? -sample : sample
-                if a > maxAbs { maxAbs = a }
+        if let durationLine = afOutput.components(separatedBy: "\n").first(where: { $0.contains("estimated duration") }) {
+            let numbers = durationLine.components(separatedBy: CharacterSet.decimalDigits.inverted).compactMap { Double($0) }
+            if let dur = numbers.first {
+                check(dur >= 2.0 && dur <= 5.0, "Duration ~3s (got \(dur)s)")
             }
         }
-        check(maxAbs > 100, "Audio is not silence (peak: \(maxAbs))")
+
+        let fileData = try? Data(contentsOf: URL(fileURLWithPath: path))
+        if let audioData = fileData?[44...] {
+            var maxAbs: Int16 = 0
+            audioData.withUnsafeBytes { buf in
+                for sample in buf.bindMemory(to: Int16.self) {
+                    let a = sample < 0 ? -sample : sample
+                    if a > maxAbs { maxAbs = a }
+                }
+            }
+            check(maxAbs > 100, "Audio is not silence (peak: \(maxAbs))")
+        }
+    } else {
+        check(false, "Expected 'Saved:' in output, got: \(result.output.prefix(300))")
     }
 }
 
@@ -283,6 +266,70 @@ do {
     }
 
     check(crashes == 0, "Zero crashes in 10 SIGINT cycles at varying timings")
+}
+
+// ═══════════════════════════════════════════════════════════════
+print("\n═══ E2E: SIGINT at exact --duration boundary (double-resume race) ═══\n")
+// ═══════════════════════════════════════════════════════════════
+
+do {
+    // Send SIGINT at the exact moment --duration expires.
+    // This tests the race between timer and signal both trying to resume
+    // the same continuation. If double-resume occurs, CheckedContinuation traps.
+    var crashes = 0
+    for _ in 0..<20 {
+        let result = run(args: ["--duration", "1"], timeout: 5, sendSIGINTAfter: 1.0)
+        if result.output.contains("permission not granted") { break }
+        if result.exitCode != 0 && !result.output.contains("Saved:") {
+            crashes += 1
+        }
+        if let path = extractSavedPath(from: result.output) {
+            try? FileManager.default.removeItem(atPath: path)
+        }
+    }
+    check(crashes == 0, "Zero crashes in 20 timer+SIGINT race attempts")
+}
+
+// ═══════════════════════════════════════════════════════════════
+print("\n═══ E2E: Long recording produces valid file ═══\n")
+// ═══════════════════════════════════════════════════════════════
+
+do {
+    // 5-second recording — verifies no crash from the stop() race condition
+    // and that final drain produces a complete, playable file.
+    let result = run(args: ["--duration", "5"], timeout: 12)
+
+    if result.output.contains("permission not granted") {
+        check(true, "Skipped (no permission)")
+    } else {
+        check(!result.timedOut, "5s recording completes within 12s timeout")
+        check(result.exitCode == 0, "Clean exit (code=\(result.exitCode))")
+
+        if let path = extractSavedPath(from: result.output) {
+            defer { try? FileManager.default.removeItem(atPath: path) }
+
+            // Verify file is substantial and playable
+            let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+            let size = (attrs?[.size] as? Int) ?? 0
+            // 5s × 48000 × 2ch × 2bytes = 960,000 bytes minimum
+            check(size > 900_000, "5s recording is ≥900KB (got \(size))")
+
+            let afinfo = Process()
+            afinfo.executableURL = URL(fileURLWithPath: "/usr/bin/afinfo")
+            afinfo.arguments = [path]
+            let p = Pipe()
+            afinfo.standardOutput = p
+            afinfo.standardError = p
+            try? afinfo.run()
+            afinfo.waitUntilExit()
+            let info = String(data: p.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            check(afinfo.terminationStatus == 0, "afinfo validates 5s WAV")
+
+            if let durLine = info.components(separatedBy: "\n").first(where: { $0.contains("estimated duration") }) {
+                check(durLine.contains("5.") || durLine.contains("4.9"), "Duration ≈ 5s (\(durLine.trimmingCharacters(in: .whitespaces)))")
+            }
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════

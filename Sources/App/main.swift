@@ -61,31 +61,38 @@ struct AudioRecorderCLI {
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             let queue = DispatchQueue(label: "com.audiorecorder.signal")
 
+            // Guard against double-resume: all handlers run on the same serial queue,
+            // but a handler can be already enqueued when another handler cancels the source.
+            // This flag ensures only the first handler resumes the continuation.
+            var resumed = false
+
             let sigSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: queue)
-            sigSource.setEventHandler {
+            var termSource: DispatchSourceSignal?
+            var timer: DispatchSourceTimer?
+
+            let resumeOnce = {
+                guard !resumed else { return }
+                resumed = true
                 sigSource.cancel()
+                termSource?.cancel()
+                timer?.cancel()
                 continuation.resume()
             }
+
+            sigSource.setEventHandler { resumeOnce() }
             sigSource.resume()
 
-            let termSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: queue)
-            termSource.setEventHandler {
-                termSource.cancel()
-                continuation.resume()
-            }
-            termSource.resume()
+            let ts = DispatchSource.makeSignalSource(signal: SIGTERM, queue: queue)
+            ts.setEventHandler { resumeOnce() }
+            ts.resume()
+            termSource = ts
 
-            // Duration timer (optional)
             if let duration {
-                let timer = DispatchSource.makeTimerSource(queue: queue)
-                timer.schedule(deadline: .now() + .seconds(duration))
-                timer.setEventHandler {
-                    timer.cancel()
-                    sigSource.cancel()
-                    termSource.cancel()
-                    continuation.resume()
-                }
-                timer.resume()
+                let t = DispatchSource.makeTimerSource(queue: queue)
+                t.schedule(deadline: .now() + .seconds(duration))
+                t.setEventHandler { resumeOnce() }
+                t.resume()
+                timer = t
             }
         }
     }
