@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AudioMixer — Menu Bar App Design</title>
+<style>
+:root {
+  --bg: #1c1c1e;
+  --bg-elevated: #2c2c2e;
+  --bg-hover: #3a3a3c;
+  --text-primary: #f5f5f7;
+  --text-secondary: #98989d;
+  --text-tertiary: #636366;
+  --accent: #ff453a;
+  --accent-green: #30d158;
+  --accent-blue: #0a84ff;
+  --border: rgba(255,255,255,0.08);
+  --radius: 12px;
+  --radius-sm: 8px;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+  background: #000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 60px 40px;
+  gap: 80px;
+  color: var(--text-primary);
+  min-height: 100vh;
+}
+
+h1 {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.design-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+}
+
+/* Menu Bar Icon States */
+.menubar-mock {
+  background: #2d2d2d;
+  border-radius: 6px;
+  padding: 4px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 25px;
+}
+
+.menubar-icon {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.menubar-icon svg {
+  width: 14px;
+  height: 14px;
+  fill: var(--text-primary);
+}
+
+.menubar-icon.recording svg {
+  fill: var(--accent);
+}
+
+.menubar-time {
+  font-size: 11px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+/* Panel */
+.panel {
+  width: 280px;
+  background: var(--bg);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  box-shadow:
+    0 0 0 0.5px rgba(0,0,0,0.3),
+    0 24px 48px rgba(0,0,0,0.5),
+    0 8px 16px rgba(0,0,0,0.3);
+  transform-origin: top center;
+  animation: panelIn 250ms var(--ease-out) both;
+}
+
+@keyframes panelIn {
+  from { opacity: 0; transform: scale(0.96) translateY(-4px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.panel-header {
+  padding: 16px 16px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.panel-subtitle {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* Sources */
+.sources {
+  padding: 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.source-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  transition: background 150ms ease;
+}
+
+.source-row:hover {
+  background: var(--bg-hover);
+}
+
+.source-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.source-icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+
+.source-label {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.source-level {
+  width: 48px;
+  height: 4px;
+  background: var(--bg-hover);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.source-level-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent-green);
+  transition: width 100ms linear;
+}
+
+/* Record Button */
+.record-section {
+  padding: 12px 16px 16px;
+}
+
+.record-btn {
+  width: 100%;
+  height: 40px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: transform 160ms var(--ease-out), background 150ms ease;
+}
+
+.record-btn:active {
+  transform: scale(0.97);
+}
+
+.record-btn.idle {
+  background: var(--accent);
+  color: white;
+}
+
+.record-btn.recording {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+
+.record-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Timer */
+.timer {
+  text-align: center;
+  padding: 4px 0 8px;
+}
+
+.timer-value {
+  font-size: 28px;
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  letter-spacing: -0.5px;
+}
+
+.timer-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+/* Waveform */
+.waveform {
+  padding: 0 16px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 1.5px;
+}
+
+.waveform-bar {
+  width: 2px;
+  background: var(--accent-green);
+  border-radius: 1px;
+  transition: height 80ms linear;
+  opacity: 0.8;
+}
+
+/* Divider */
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 16px;
+}
+
+/* Footer */
+.panel-footer {
+  padding: 8px 12px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.footer-info {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.footer-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.icon-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: background 150ms ease, transform 160ms var(--ease-out);
+}
+
+.icon-btn:hover {
+  background: var(--bg-hover);
+}
+
+.icon-btn:active {
+  transform: scale(0.92);
+}
+
+/* Output path */
+.output-row {
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.output-path {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+/* States container */
+.states {
+  display: flex;
+  gap: 40px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.state-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  text-align: center;
+  margin-top: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+</style>
+</head>
+<body>
+
+<!-- Menu Bar States -->
+<div class="design-section">
+  <h1>Menu Bar Icon</h1>
+  <div class="states">
+    <div>
+      <div class="menubar-mock">
+        <div class="menubar-icon">
+          <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="2"/></svg>
+        </div>
+      </div>
+      <p class="state-label">Idle</p>
+    </div>
+    <div>
+      <div class="menubar-mock">
+        <div class="menubar-icon recording">
+          <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="8" r="2"/></svg>
+        </div>
+        <span class="menubar-time">2:34</span>
+      </div>
+      <p class="state-label">Recording</p>
+    </div>
+  </div>
+</div>
+
+<!-- Idle State Panel -->
+<div class="design-section">
+  <h1>Panel — Ready</h1>
+  <div class="panel">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">AudioMixer</div>
+        <div class="panel-subtitle">Ready to record</div>
+      </div>
+    </div>
+
+    <div class="sources">
+      <div class="source-row">
+        <div class="source-info">
+          <div class="source-icon">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="3" y="1" width="10" height="10" rx="2"/><path d="M5 13h6M8 11v2"/></svg>
+          </div>
+          <span class="source-label">System Audio</span>
+        </div>
+        <div class="source-level">
+          <div class="source-level-fill" style="width: 0%"></div>
+        </div>
+      </div>
+      <div class="source-row">
+        <div class="source-info">
+          <div class="source-icon">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="6" y="1" width="4" height="8" rx="2"/><path d="M4 7a4 4 0 008 0M8 11v3M6 14h4"/></svg>
+          </div>
+          <span class="source-label">MacBook Pro Microphone</span>
+        </div>
+        <div class="source-level">
+          <div class="source-level-fill" style="width: 0%"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="output-row">
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5"><path d="M2 10v3h12v-3M8 2v8M5 5l3-3 3 3"/></svg>
+      <span class="output-path">~/Desktop/recording_20260531.wav</span>
+    </div>
+
+    <div class="record-section">
+      <button class="record-btn idle">Start Recording</button>
+    </div>
+  </div>
+</div>
+
+<!-- Recording State Panel -->
+<div class="design-section">
+  <h1>Panel — Recording</h1>
+  <div class="panel">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">AudioMixer</div>
+        <div class="panel-subtitle" style="color: var(--accent-green)">Recording</div>
+      </div>
+      <div style="display:flex; align-items:center; gap:4px;">
+        <div class="record-dot"></div>
+      </div>
+    </div>
+
+    <div class="timer">
+      <div class="timer-value">2:34</div>
+      <div class="timer-label">5.3 MB</div>
+    </div>
+
+    <div class="waveform" id="waveform">
+    </div>
+
+    <div class="sources" style="padding-top: 8px;">
+      <div class="source-row">
+        <div class="source-info">
+          <div class="source-icon">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="3" y="1" width="10" height="10" rx="2"/><path d="M5 13h6M8 11v2"/></svg>
+          </div>
+          <span class="source-label">System Audio</span>
+        </div>
+        <div class="source-level">
+          <div class="source-level-fill" style="width: 65%"></div>
+        </div>
+      </div>
+      <div class="source-row">
+        <div class="source-info">
+          <div class="source-icon">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="6" y="1" width="4" height="8" rx="2"/><path d="M4 7a4 4 0 008 0M8 11v3M6 14h4"/></svg>
+          </div>
+          <span class="source-label">Microphone</span>
+        </div>
+        <div class="source-level">
+          <div class="source-level-fill" style="width: 42%"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="record-section">
+      <button class="record-btn recording">
+        <svg width="12" height="12" viewBox="0 0 12 12"><rect x="2" y="2" width="8" height="8" rx="1.5" fill="var(--accent)"/></svg>
+        Stop Recording
+      </button>
+    </div>
+
+    <div class="panel-footer">
+      <span class="footer-info">48kHz / 16-bit / Stereo</span>
+      <div class="footer-actions">
+        <button class="icon-btn" title="Open output folder">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4v9h12V6H8.5L7 4H2z"/></svg>
+        </button>
+        <button class="icon-btn" title="Settings">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="2.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5L13 13M3 13l1.5-1.5M11.5 4.5L13 3"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Animate waveform
+const waveform = document.getElementById('waveform');
+const barCount = 64;
+for (let i = 0; i < barCount; i++) {
+  const bar = document.createElement('div');
+  bar.className = 'waveform-bar';
+  bar.style.height = '4px';
+  waveform.appendChild(bar);
+}
+
+function animateWaveform() {
+  const bars = waveform.querySelectorAll('.waveform-bar');
+  bars.forEach((bar, i) => {
+    const base = Math.sin(Date.now() / 300 + i * 0.3) * 0.3 + 0.5;
+    const noise = Math.random() * 0.4;
+    const height = Math.max(3, (base + noise) * 24);
+    bar.style.height = height + 'px';
+  });
+  requestAnimationFrame(animateWaveform);
+}
+animateWaveform();
+</script>
+
+</body>
+</html>
