@@ -333,6 +333,42 @@ do {
 }
 
 // ═══════════════════════════════════════════════════════════════
+print("\n═══ E2E: --help prints usage and exits ═══\n")
+// ═══════════════════════════════════════════════════════════════
+
+do {
+    let result = run(args: ["--help"], timeout: 5)
+    check(!result.timedOut, "--help does not hang")
+    check(result.exitCode == 0, "--help exits with code 0")
+    check(result.output.contains("--duration"), "--help mentions --duration")
+    check(result.output.contains("--output"), "--help mentions --output")
+    check(result.output.lowercased().contains("usage") || result.output.lowercased().contains("record"), "--help shows usage info")
+}
+
+// ═══════════════════════════════════════════════════════════════
+print("\n═══ E2E: --output controls file location ═══\n")
+// ═══════════════════════════════════════════════════════════════
+
+do {
+    let customPath = FileManager.default.temporaryDirectory.appendingPathComponent("custom_\(UUID()).wav").path
+    defer { try? FileManager.default.removeItem(atPath: customPath) }
+
+    let result = run(args: ["--duration", "2", "--output", customPath], timeout: 8)
+
+    if result.output.contains("permission not granted") {
+        check(true, "Skipped (no permission)")
+    } else {
+        check(!result.timedOut, "--output recording completes")
+        let exists = FileManager.default.fileExists(atPath: customPath)
+        check(exists, "File created at specified --output path")
+        if exists {
+            let size = (try? FileManager.default.attributesOfItem(atPath: customPath)[.size] as? Int) ?? 0
+            check(size > 10000, "Output file has content (\(size) bytes)")
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
 // Results
 // ═══════════════════════════════════════════════════════════════
 

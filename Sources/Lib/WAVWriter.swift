@@ -47,17 +47,27 @@ public final class WAVWriter: @unchecked Sendable {
         writeHeader()
     }
 
-    public func write(samples: [Int16]) {
-        samples.withUnsafeBufferPointer { ptr in
+    /// Returns false if disk write fails (e.g., disk full).
+    @discardableResult
+    public func write(samples: [Int16]) -> Bool {
+        guard !samples.isEmpty else { return true }
+        let success = samples.withUnsafeBufferPointer { ptr -> Bool in
             let data = Data(bytes: ptr.baseAddress!, count: ptr.count * MemoryLayout<Int16>.size)
-            fileHandle.write(data)
-            dataSize += UInt64(data.count)
+            do {
+                try fileHandle.write(contentsOf: data)
+                dataSize += UInt64(data.count)
+                return true
+            } catch {
+                fputs("Warning: disk write failed (\(error.localizedDescription))\n", stderr)
+                return false
+            }
         }
 
-        // Check if we need to upgrade to RF64
-        if !upgradedToRF64 && dataSize > Self.fourGBThreshold {
+        if success && !upgradedToRF64 && dataSize > Self.fourGBThreshold {
             upgradeToRF64()
         }
+
+        return success
     }
 
     public func finalize() {
