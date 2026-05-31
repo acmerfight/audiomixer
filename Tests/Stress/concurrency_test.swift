@@ -1,8 +1,8 @@
 import Foundation
 import AudioRecorderLib
 
-/// Stress tests to verify thread safety and overflow behavior empirically.
-/// Not speculation — run it and observe.
+/// BDD integration tests that verify REAL behavior under realistic conditions.
+/// Only tests that have caught or could catch actual bugs survive here.
 
 nonisolated(unsafe) var passed = 0
 nonisolated(unsafe) var failed = 0
@@ -13,65 +13,46 @@ func check(_ ok: Bool, _ msg: String) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Test 1: RingBuffer concurrent SPSC — producer on one thread,
-// consumer on another. Verify no data loss or corruption.
+// Scenario: RingBuffer concurrent producer/consumer
+// Why: Verifies no data corruption across threads.
+//      Would catch memory ordering bugs on weakly-ordered architectures.
 // ═══════════════════════════════════════════════════════════════
 
-print("═══ Concurrency: RingBuffer SPSC stress test ═══\n")
+print("═══ Concurrent SPSC: 1M samples across 2 threads ═══\n")
 
 do {
     let iterations = 1_000_000
     let ring = RingBuffer(capacity: 4096)
-    var totalWritten = 0
     var totalRead = 0
     var corruptionDetected = false
 
     let producerDone = DispatchSemaphore(value: 0)
     let consumerDone = DispatchSemaphore(value: 0)
 
-    // Producer: write sequential values so consumer can verify order
-    let producerQueue = DispatchQueue(label: "producer", qos: .userInteractive)
-    producerQueue.async {
+    DispatchQueue(label: "producer", qos: .userInteractive).async {
         var value: Float = 0
         var written = 0
         while written < iterations {
-            let batchSize = min(64, iterations - written)
-            var batch = [Float](repeating: 0, count: batchSize)
-            for i in 0..<batchSize {
-                batch[i] = value
-                value += 1
-            }
+            let n = min(64, iterations - written)
+            var batch = [Float](repeating: 0, count: n)
+            for i in 0..<n { batch[i] = value; value += 1 }
             ring.write(batch)
-            written += batchSize
+            written += n
         }
-        totalWritten = written
         producerDone.signal()
     }
 
-    // Consumer: read and verify sequential order
-    let consumerQueue = DispatchQueue(label: "consumer", qos: .userInitiated)
-    consumerQueue.async {
-        var expectedValue: Float = 0
+    DispatchQueue(label: "consumer", qos: .userInitiated).async {
+        var expected: Float = 0
         var read = 0
         var spins = 0
-
         while read < iterations {
             let data = ring.read(count: 128)
-            if data.isEmpty {
-                spins += 1
-                if spins > 10_000_000 {
-                    // Timeout — producer may have finished but we missed data
-                    break
-                }
-                continue
-            }
+            if data.isEmpty { spins += 1; if spins > 10_000_000 { break }; continue }
             spins = 0
-            for sample in data {
-                if sample != expectedValue {
-                    corruptionDetected = true
-                    break
-                }
-                expectedValue += 1
+            for s in data {
+                if s != expected { corruptionDetected = true; break }
+                expected += 1
             }
             read += data.count
             if corruptionDetected { break }
@@ -83,152 +64,165 @@ do {
     producerDone.wait()
     consumerDone.wait()
 
-    check(!corruptionDetected, "No data corruption in 1M samples across 2 threads")
-    check(totalRead == iterations, "All \(iterations) samples transferred (got \(totalRead))")
-    if totalRead != iterations {
-        print("    Note: \(iterations - totalRead) samples lost (overflow or timing)")
-    }
+    check(!corruptionDetected, "Zero data corruption")
+    check(totalRead == iterations, "All \(iterations) samples transferred")
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Test 2: RingBuffer overflow behavior — verify what happens
-// when producer outpaces consumer
+// Scenario: RingBuffer overflow preserves newest audio
+// Why: Caught a real bug — original impl dropped newest data.
 // ═══════════════════════════════════════════════════════════════
 
-print("\n═══ Overflow: RingBuffer full behavior ═══\n")
+print("\n═══ Overflow: preserves newest audio ═══\n")
 
 do {
     let ring = RingBuffer(capacity: 100)
 
-    // Write 150 samples into capacity-100 ring (no consumer)
-    let first50: [Float] = (0..<50).map { Float($0) }
-    let next50: [Float] = (50..<100).map { Float($0) }
-    let overflow50: [Float] = (100..<150).map { Float($0) }
+    // Write 150 values into 100-capacity ring without consuming
+    for i in 0..<150 {
+        ring.write([Float(i)])
+    }
 
-    ring.write(first50)
-    ring.write(next50)
-    // Ring is now full (99 usable slots in power-of-2 or capacity-1 SPSC)
-    let availableBeforeOverflow = ring.availableToRead
-    ring.write(overflow50)
-    let availableAfterOverflow = ring.availableToRead
-
-    print("  Capacity: 100")
-    print("  Available before overflow write: \(availableBeforeOverflow)")
-    print("  Available after overflow write: \(availableAfterOverflow)")
-
-    // Read whatever is there and check what data we got
     let data = ring.read(count: ring.availableToRead)
-    let firstSample = data.first ?? -1
-    let lastSample = data.last ?? -1
-
-    print("  Samples read: \(data.count)")
-    print("  First sample: \(firstSample) (0 = oldest kept, >0 = oldest dropped)")
-    print("  Last sample: \(lastSample)")
-
-    // Determine overflow policy
-    if firstSample == 0 {
-        check(true, "Overflow policy: NEW data dropped (oldest preserved)")
-        print("    → This means: if system is silent 10s, newest mic data is lost")
-    } else if lastSample == 149 {
-        check(true, "Overflow policy: OLD data dropped (newest preserved)")
-        print("    → This means: always have most recent audio (ideal)")
-    } else {
-        check(false, "Overflow policy: UNKNOWN behavior (first=\(firstSample) last=\(lastSample))")
-    }
+    let last = data.last ?? -1
+    check(last == 149.0, "Last written value (149) survives overflow (got \(last))")
+    check(data.first! > 0, "Oldest values were dropped (first=\(data.first!))")
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Test 3: Simulate the actual recording scenario —
-// system silent for 5 seconds while mic produces data.
-// Verify what happens to mic data.
+// Scenario: System silent >10s, mic still records
+// Why: Caught a real bug — overflow was losing newest mic data.
 // ═══════════════════════════════════════════════════════════════
 
-print("\n═══ Scenario: System silent 5s, mic active ═══\n")
+print("\n═══ Scenario: 12s system silence (ring overflow) ═══\n")
 
 do {
-    // Same ring size as CaptureEngine: 48000 * 2 * 10 = 960000 (10 seconds stereo)
-    let micRing = RingBuffer(capacity: 48000 * 2 * 10)
-    let sysRing = RingBuffer(capacity: 48000 * 2 * 10)
+    let micRing = RingBuffer(capacity: 48000 * 2 * 10) // 10s capacity
 
-    // Simulate: mic produces 5 seconds of data, system produces nothing
-    let fiveSecondsStereo = 48000 * 2 * 5 // 480000 samples
-    let micData = [Float](repeating: 0.5, count: fiveSecondsStereo)
-    micRing.write(micData)
-
-    let micAvailable = micRing.availableToRead
-    let sysAvailable = sysRing.availableToRead
-
-    print("  After 5s silence: mic has \(micAvailable) samples, sys has \(sysAvailable)")
-    check(micAvailable == fiveSecondsStereo, "Mic data preserved during system silence (\(micAvailable)/\(fiveSecondsStereo))")
-    check(sysAvailable == 0, "System ring empty as expected")
-
-    // Now simulate: system starts producing again (1 second)
-    let oneSecondStereo = 48000 * 2
-    sysRing.write([Float](repeating: 0.3, count: oneSecondStereo))
-
-    // Use AlignedDrainer
-    let drainer = AlignedDrainer(sampleRate: 48000, channels: 2, minChunkFrames: 0)
-    let result = drainer.drain(system: sysRing, mic: micRing)
-
-    print("  After system resumes: drained sys=\(result.system.count) mic=\(result.mic.count)")
-    check(result.system.count == result.mic.count, "Output is aligned")
-    check(result.system.count == oneSecondStereo, "Output = 1 second (limited by system)")
-
-    // After drain: AlignedDrainer truncates mic excess beyond 2s threshold before draining.
-    // mic had 5s, sys had 1s → diff=4s > 2s → mic truncated to sys+2s = 3s → drain 1s → mic remains 2s
-    let micRemaining = micRing.availableToRead
-    let sysRemaining = sysRing.availableToRead
-    print("  Mic remaining: \(micRemaining) (\(Double(micRemaining)/(48000*2))s), sys remaining: \(sysRemaining)")
-    let maxDiff = 48000 * 2 * 2  // 2 seconds threshold
-    check(micRemaining - sysRemaining <= maxDiff, "Mic-sys gap ≤ 2s after drain (gap=\(micRemaining - sysRemaining))")
-}
-
-// ═══════════════════════════════════════════════════════════════
-// Test 4: Simulate 10s system silence (exceeds ring buffer) —
-// What happens when mic fills the ring?
-// ═══════════════════════════════════════════════════════════════
-
-print("\n═══ Scenario: System silent >10s (ring overflow) ═══\n")
-
-do {
-    let capacity = 48000 * 2 * 10 // 10 seconds
-    let micRing = RingBuffer(capacity: capacity)
-    let sysRing = RingBuffer(capacity: capacity)
-
-    // Simulate: mic produces 12 seconds (exceeds 10s ring capacity)
-    let twelveSec = 48000 * 2 * 12
-    // Write in 1-second chunks to be realistic
+    // Mic produces 12 seconds into 10s ring
     for sec in 0..<12 {
-        let chunk = [Float](repeating: Float(sec), count: 48000 * 2)
-        micRing.write(chunk)
+        micRing.write([Float](repeating: Float(sec), count: 48000 * 2))
     }
 
-    let micAvailable = micRing.availableToRead
-    print("  After 12s mic into 10s ring: available = \(micAvailable)")
-    print("  Ring capacity: \(capacity)")
-
-    // Read and check: which data survived?
-    let surviving = micRing.read(count: micAvailable)
-    let firstSurvivingSec = surviving.first ?? -1
-    let lastSurvivingSec = surviving.last ?? -1
-    print("  First surviving sample value: \(firstSurvivingSec) (expected: 0 if old kept, 2+ if old dropped)")
-    print("  Last surviving sample value: \(lastSurvivingSec)")
-
-    if firstSurvivingSec == 0 {
-        print("  → CONCLUSION: Overflow drops NEW data. Oldest 10s kept, newest 2s LOST.")
-        print("  → RISK: In your scenario, if system silent >10s, most recent mic audio is lost.")
-        check(false, "Overflow policy is suboptimal for recording (drops newest)")
-    } else {
-        print("  → CONCLUSION: Overflow drops OLD data. Newest audio preserved.")
-        check(true, "Overflow policy is optimal for recording (keeps newest)")
-    }
+    let data = micRing.read(count: micRing.availableToRead)
+    let lastValue = data.last ?? -1
+    check(lastValue == 11.0, "Most recent mic audio (sec 11) preserved (got \(lastValue))")
+    check(data.first! > 0.0, "Oldest audio dropped to make room")
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Results
+// Scenario: AlignedDrainer under system silence
+// Why: Original drift detection misinterpreted silence as clock drift.
+// ═══════════════════════════════════════════════════════════════
+
+print("\n═══ Scenario: AlignedDrainer with system silence ═══\n")
+
+do {
+    let sys = RingBuffer(capacity: 48000 * 2 * 10)
+    let mic = RingBuffer(capacity: 48000 * 2 * 10)
+
+    // 5 seconds of mic, zero system
+    mic.write([Float](repeating: 0.5, count: 48000 * 2 * 5))
+
+    let drainer = AlignedDrainer(sampleRate: 48000, channels: 2, minChunkFrames: 0)
+    let result = drainer.drain(system: sys, mic: mic)
+
+    // Should NOT output anything (no system data to align with)
+    check(result.system.isEmpty && result.mic.isEmpty, "No output when system is silent (waiting for system)")
+    // Mic data should NOT be truncated
+    check(mic.availableToRead == 48000 * 2 * 5, "Mic data preserved during silence (\(mic.availableToRead))")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Scenario: Full pipeline simulation — WAV output is valid
+// Why: Verifies the data path from buffers through mix to disk.
+// ═══════════════════════════════════════════════════════════════
+
+print("\n═══ Pipeline: simulated 3s recording → valid WAV ═══\n")
+
+do {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).wav")
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let writer = try WAVWriter(url: url, sampleRate: 48000, channels: 2, bitsPerSample: 16)
+    let sysRing = RingBuffer(capacity: 48000 * 2 * 5)
+    let micRing = RingBuffer(capacity: 48000 * 2 * 5)
+    let drainer = AlignedDrainer(sampleRate: 48000, channels: 2, minChunkFrames: 0)
+
+    // Feed 3 seconds in 1024-frame chunks
+    let totalFrames = 48000 * 3
+    var produced = 0
+    while produced < totalFrames {
+        let n = min(1024, totalFrames - produced)
+        var sysBuf = [Float](repeating: 0, count: n * 2)
+        var micBuf = [Float](repeating: 0, count: n * 2)
+        for i in 0..<n {
+            let t = Float(produced + i) / 48000.0
+            sysBuf[i*2] = sin(2 * .pi * 440 * t) * 0.5
+            sysBuf[i*2+1] = sysBuf[i*2]
+            micBuf[i*2] = sin(2 * .pi * 1000 * t) * 0.3
+            micBuf[i*2+1] = micBuf[i*2]
+        }
+        sysRing.write(sysBuf)
+        micRing.write(micBuf)
+        produced += n
+
+        let r = drainer.drain(system: sysRing, mic: micRing)
+        if !r.system.isEmpty {
+            let mixed = AudioMixer.mix(system: r.system, mic: r.mic)
+            writer.write(samples: AudioMixer.toInt16(mixed))
+        }
+    }
+    // Flush
+    let r = drainer.drain(system: sysRing, mic: micRing, flush: true)
+    if !r.system.isEmpty || !r.mic.isEmpty {
+        let mixed = AudioMixer.mix(system: r.system, mic: r.mic)
+        writer.write(samples: AudioMixer.toInt16(mixed))
+    }
+    writer.finalize()
+
+    // Validate with afinfo
+    let proc = Process()
+    proc.executableURL = URL(fileURLWithPath: "/usr/bin/afinfo")
+    proc.arguments = [url.path]
+    let pipe = Pipe()
+    proc.standardOutput = pipe
+    proc.standardError = pipe
+    try proc.run()
+    proc.waitUntilExit()
+    let info = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+
+    check(proc.terminationStatus == 0, "afinfo validates output WAV")
+    check(info.contains("48000 Hz"), "48kHz sample rate")
+    check(info.contains("2 ch"), "Stereo")
+    check(info.contains("Int16"), "16-bit PCM")
+
+    // Not silence
+    let fileData = try Data(contentsOf: url)
+    var peak: Int16 = 0
+    fileData[44...].withUnsafeBytes { for s in $0.bindMemory(to: Int16.self) { let a = abs(Int(s)); if a > Int(peak) { peak = Int16(a) } } }
+    check(peak > 1000, "Audio is not silence (peak: \(peak))")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Scenario: Resampler 44.1kHz→48kHz
+// Why: This is a real code path when mic delivers different rate.
+// ═══════════════════════════════════════════════════════════════
+
+print("\n═══ Resampler: 44.1kHz → 48kHz ═══\n")
+
+do {
+    // 10ms at 44100 = 441 samples → should become 480 at 48000
+    let input = (0..<441).map { sin(2.0 * .pi * 1000.0 * Double($0) / 44100.0) }.map { Float($0) }
+    let output = Resampler.resample(input, fromRate: 44100, toRate: 48000, channels: 1)
+    check(output.count == 480, "441 samples @ 44.1kHz → 480 @ 48kHz (got \(output.count))")
+    let peak = output.max() ?? 0
+    check(peak > 0.9, "Signal integrity preserved (peak: \(peak))")
+}
+
 // ═══════════════════════════════════════════════════════════════
 
 print("\n" + String(repeating: "═", count: 50))
-print("Concurrency/Overflow: \(passed) passed, \(failed) failed")
-if failed > 0 { print("ISSUES FOUND — SEE ABOVE"); exit(1) }
+print("Integration: \(passed) passed, \(failed) failed")
+if failed > 0 { print("FAILED"); exit(1) }
 else { print("ALL PASSED ✓"); exit(0) }

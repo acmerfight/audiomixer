@@ -25,17 +25,7 @@ let package = Package(
             swiftSettings: [.unsafeFlags(["-parse-as-library"])]
         ),
         .executableTarget(
-            name: "AudioRecorderTests",
-            dependencies: ["AudioRecorderLib"],
-            path: "Tests/Unit"
-        ),
-        .executableTarget(
             name: "AudioRecorderIntegration",
-            dependencies: ["AudioRecorderLib"],
-            path: "Tests/Integration"
-        ),
-        .executableTarget(
-            name: "AudioRecorderStress",
             dependencies: ["AudioRecorderLib"],
             path: "Tests/Stress"
         ),

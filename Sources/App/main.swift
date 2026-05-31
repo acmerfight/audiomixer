@@ -2,6 +2,12 @@ import Foundation
 import ScreenCaptureKit
 import AudioRecorderLib
 
+nonisolated(unsafe) var globalStopped = false
+
+private func signalHandler(_: Int32) {
+    globalStopped = true
+}
+
 @main
 struct AudioRecorderCLI {
     static func main() async {
@@ -31,13 +37,8 @@ struct AudioRecorderCLI {
         let outputURL = makeOutputURL()
         let engine = CaptureEngine(outputURL: outputURL)
 
-        // Install Ctrl+C handler
-        signal(SIGINT, SIG_IGN)
-        let sigSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
-        let stopped = UnsafeMutablePointer<Bool>.allocate(capacity: 1)
-        stopped.pointee = false
-        sigSource.setEventHandler { stopped.pointee = true }
-        sigSource.resume()
+        signal(SIGINT, signalHandler)
+        signal(SIGTERM, signalHandler)
 
         do {
             try await engine.start()
@@ -49,8 +50,8 @@ struct AudioRecorderCLI {
             }
 
             let startTime = Date()
-            while !stopped.pointee {
-                try await Task.sleep(for: .milliseconds(100))
+            while !globalStopped {
+                try? await Task.sleep(for: .milliseconds(100))
                 if let d = duration, Date().timeIntervalSince(startTime) >= Double(d) {
                     break
                 }
@@ -58,8 +59,6 @@ struct AudioRecorderCLI {
 
             fputs("\nStopping...\n", stderr)
             await engine.stop()
-            sigSource.cancel()
-            stopped.deallocate()
             fputs("Saved: \(outputURL.path)\n", stderr)
         } catch {
             fputs("Error: \(error.localizedDescription)\n", stderr)
