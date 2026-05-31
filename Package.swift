@@ -39,5 +39,9 @@ let package = Package(
             dependencies: ["AudioRecorderLib"],
             path: "Tests/Stress"
         ),
+        .executableTarget(
+            name: "AudioRecorderE2E",
+            path: "Tests/E2E"
+        ),
     ]
 )
