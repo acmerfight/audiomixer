@@ -158,7 +158,7 @@ do {
         }
 
         let fileData = try? Data(contentsOf: URL(fileURLWithPath: path))
-        if let audioData = fileData?[44...] {
+        if let audioData = fileData?[80...] {
             var maxAbs: Int16 = 0
             audioData.withUnsafeBytes { buf in
                 for sample in buf.bindMemory(to: Int16.self) {

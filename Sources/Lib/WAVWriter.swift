@@ -21,14 +21,17 @@ public final class WAVWriter: @unchecked Sendable {
     private var dataSize: UInt64 = 0
     private var upgradedToRF64 = false
 
-    // Header layout offsets
+    // Header layout offsets (verified by byte-counting):
+    //   0: RIFF(4) + size(4) + WAVE(4) = 12
+    //  12: JUNK(4) + size(4) + body(28) = 36  → ends at 48
+    //  48: fmt_(4) + size(4) + body(16) = 24  → ends at 72
+    //  72: data(4) + size(4) = 8              → PCM starts at 80
     private static let riffIDOffset: UInt64 = 0
     private static let riffSizeOffset: UInt64 = 4
-    private static let junkIDOffset: UInt64 = 12  // After "WAVE"
-    private static let ds64DataOffset: UInt64 = 20 // Inside JUNK/ds64 chunk body
-    private static let fmtOffset: UInt64 = 48     // After JUNK chunk (12 + 8 + 28)
-    private static let dataSizeOffset: UInt64 = 80 // "data" chunk size field
-    private static let headerSize: UInt64 = 84     // Total header bytes before PCM data
+    private static let junkIDOffset: UInt64 = 12
+    private static let ds64DataOffset: UInt64 = 20
+    private static let dataSizeOffset: UInt64 = 76
+    private static let headerSize: UInt64 = 80
 
     // ds64 chunk body is 28 bytes: riffSize(8) + dataSize(8) + sampleCount(8) + tableLength(4)
     private static let ds64BodySize: UInt32 = 28
@@ -103,9 +106,9 @@ public final class WAVWriter: @unchecked Sendable {
         header.appendUInt32(Self.ds64BodySize) // chunk size = 28
         header.append(Data(repeating: 0, count: Int(Self.ds64BodySize))) // 28 zero bytes (offset 20-47)
 
-        // fmt chunk
-        header.append(ascii: "fmt ")        // offset 48
-        header.appendUInt32(16)             // PCM fmt chunk size
+        // fmt chunk (offset 48)
+        header.append(ascii: "fmt ")
+        header.appendUInt32(16)
         header.appendUInt16(1)              // PCM format tag
         header.appendUInt16(channels)
         header.appendUInt32(sampleRate)
@@ -113,9 +116,9 @@ public final class WAVWriter: @unchecked Sendable {
         header.appendUInt16(blockAlign)
         header.appendUInt16(bitsPerSample)
 
-        // data chunk
-        header.append(ascii: "data")        // offset 76
-        header.appendUInt32(0)              // data size placeholder (offset 80)
+        // data chunk (offset 72, size field at 76, PCM starts at 80)
+        header.append(ascii: "data")
+        header.appendUInt32(0)
 
         // Total: 84 bytes
         fileHandle.write(header)

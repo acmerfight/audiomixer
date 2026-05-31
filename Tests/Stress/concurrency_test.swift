@@ -197,10 +197,17 @@ do {
     check(info.contains("2 ch"), "Stereo")
     check(info.contains("Int16"), "16-bit PCM")
 
+    // Verify afinfo reports non-zero audio bytes (catches header offset bugs)
+    let audioBytesLine = info.components(separatedBy: "\n").first { $0.contains("audio bytes") }
+    if let line = audioBytesLine {
+        let bytes = line.components(separatedBy: CharacterSet.decimalDigits.inverted).compactMap { Int($0) }.last ?? 0
+        check(bytes > 0, "afinfo reports non-zero audio bytes (\(bytes))")
+    }
+
     // Not silence
     let fileData = try Data(contentsOf: url)
     var peak: Int16 = 0
-    fileData[44...].withUnsafeBytes { for s in $0.bindMemory(to: Int16.self) { let a = abs(Int(s)); if a > Int(peak) { peak = Int16(a) } } }
+    fileData[80...].withUnsafeBytes { for s in $0.bindMemory(to: Int16.self) { let a = abs(Int(s)); if a > Int(peak) { peak = Int16(a) } } }
     check(peak > 1000, "Audio is not silence (peak: \(peak))")
 }
 
