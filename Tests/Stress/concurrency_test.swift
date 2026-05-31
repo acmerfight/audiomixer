@@ -1,4 +1,5 @@
 import Foundation
+import os
 import AudioRecorderLib
 
 /// BDD integration tests that verify REAL behavior under realistic conditions.
@@ -22,9 +23,8 @@ print("═══ Concurrent SPSC: 1M samples across 2 threads ═══\n")
 
 do {
     let iterations = 1_000_000
-    let ring = RingBuffer(capacity: 4096)
-    var totalRead = 0
-    var corruptionDetected = false
+    let ring = RingBuffer(capacity: 1_048_576) // 1M capacity — enough to never overflow in this test
+    let resultLock = OSAllocatedUnfairLock(initialState: (totalRead: 0, corrupted: false))
 
     let producerDone = DispatchSemaphore(value: 0)
     let consumerDone = DispatchSemaphore(value: 0)
@@ -46,23 +46,30 @@ do {
         var expected: Float = 0
         var read = 0
         var spins = 0
+        var localCorrupted = false
         while read < iterations {
             let data = ring.read(count: 128)
             if data.isEmpty { spins += 1; if spins > 10_000_000 { break }; continue }
             spins = 0
             for s in data {
-                if s != expected { corruptionDetected = true; break }
+                if s != expected { localCorrupted = true; break }
                 expected += 1
             }
             read += data.count
-            if corruptionDetected { break }
+            if localCorrupted { break }
         }
-        totalRead = read
+        let finalRead = read
+        let finalCorrupted = localCorrupted
+        resultLock.withLock { $0 = (totalRead: finalRead, corrupted: finalCorrupted) }
         consumerDone.signal()
     }
 
     producerDone.wait()
     consumerDone.wait()
+
+    let result = resultLock.withLock { $0 }
+    let totalRead = result.totalRead
+    let corruptionDetected = result.corrupted
 
     check(!corruptionDetected, "Zero data corruption")
     check(totalRead == iterations, "All \(iterations) samples transferred")
